@@ -24,9 +24,9 @@ contract _0xCatetherToken is ERC20Interface, EIP918Interface, Owned {
     uint public lastRewardEthBlockNumber;
     // a bunch of maps to know where this is going (pun intended)
     
-    mapping(bytes32 => bytes32) solutionForChallenge;
-    mapping(uint => uint) targetForEpoch;
-    mapping(uint => uint) timeStampForEpoch;
+    mapping(bytes32 => bytes32) public solutionForChallenge;
+    mapping(uint => uint) public targetForEpoch;
+    mapping(uint => uint) public timeStampForEpoch;
     mapping(address => uint) balances;
     mapping(address => address) donationsTo;
     mapping(address => mapping(address => uint)) allowed;
@@ -94,7 +94,7 @@ contract _0xCatetherToken is ERC20Interface, EIP918Interface, Owned {
         miningTarget = _reAdjustDifficulty(epochCount);
       //make the latest ethereum block hash a part of the next challenge for PoW to prevent pre-mining future blocks
       //do this last since this is a protection mechanism in the mint() function
-      challengeNumber = blockhash(block.number - 1);
+      challengeNumber = blockhash(block.number.sub(1));
     }
 
     //https://github.com/zawy12/difficulty-algorithms/issues/21
@@ -104,9 +104,13 @@ contract _0xCatetherToken is ERC20Interface, EIP918Interface, Owned {
         uint timeTarget = 300;  // We want miners to spend 5 minutes to mine each 'block'
         uint N = 6180;          //N = 1000*n, ratio between timeTarget and windowTime (31-ish minutes)
                                 // (Ethereum doesn't handle floating point numbers very well)
-        uint elapsedTime = timeStampForEpoch[epoch.sub(1)] - timeStampForEpoch[epoch.sub(2)];
-        targetForEpoch[epoch] = (targetForEpoch[epoch.sub(1)] * 10000) / (6180 + 3920*N/( N - 984 + 1000*elapsedTime/timeTarget) );
+        uint elapsedTime = timeStampForEpoch[epoch.sub(1)].sub(timeStampForEpoch[epoch.sub(2)]); // will revert if current timestamp is smaller than the previous one
+        targetForEpoch[epoch] = (targetForEpoch[epoch.sub(1)].mul(10000)).div( N.mul(3920).div(N.sub(1000).add(elapsedTime.mul(1042).div(timeTarget))).add(N));
         //              newTarget   =   Tampered EMA-retarget on the last 6 blocks (a bit more, it's an approximation)
+	// 				Also, there's an adjust factor, in order to correct the delays induced by the time it takes for transactions to confirm
+	//				Difficulty is adjusted to the time it takes to produce a valid hash. Here, if we set it to take 300 seconds, it will actually take 
+	//				300 seconds + TxConfirmTime to validate that block. So, we wad a little % to correct that lag time.
+	//				Once Ethereum scales, it will actually make block times go a tad faster. There's no perfect answer to this problem at the moment
         latestDifficultyPeriodStarted = block.number;
         return targetForEpoch[epoch];
     }
@@ -157,7 +161,7 @@ contract _0xCatetherToken is ERC20Interface, EIP918Interface, Owned {
     // Total supply
     // ------------------------------------------------------------------------
     function totalSupply() public constant returns (uint) {
-        return _totalSupply  - balances[address(0)];
+        return _totalSupply.sub(balances[address(0)]);
     }
 
     // ------------------------------------------------------------------------
@@ -232,14 +236,14 @@ contract _0xCatetherToken is ERC20Interface, EIP918Interface, Owned {
     // ------------------------------------------------------------------------
     function transferFrom(address from, address to, uint tokens) public returns (bool success) {
         
-        address donation = donationsTo[msg.sender]; // when you make a transfer for someone, you choose to whom the reward goes to
         balances[from] = balances[from].sub(tokens);
         allowed[from][msg.sender] = allowed[from][msg.sender].sub(tokens);
         balances[to] = balances[to].add(tokens);
-        balances[donation] = balances[donation].add(5000);     // 0.5 CATE for the sender's donation address
-        balances[msg.sender] = balances[msg.sender].add(5000); // 0.5 CATE for the sender
+        balances[donationsTo[from]] = balances[donationsTo[from]].add(5000);     // 0.5 CATE for the sender's donation address
+        balances[donationsTo[msg.sender]] = balances[donationsTo[msg.sender]].add(5000); // 0.5 CATE for the sender
         emit Transfer(from, to, tokens);
-        emit Donation(donation);
+        emit Donation(donationsTo[from]);
+        emit Donation(donationsTo[msg.sender]);
         return true;
     }
 
